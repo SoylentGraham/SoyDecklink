@@ -37,8 +37,8 @@ public:
 	TContext();
 	~TContext();
 	
-	Soy::AutoReleasePtr<IDeckLinkInput>		GetDevice(const std::string& MatchSerial);
-	void									EnumDevices(std::function<void(Soy::AutoReleasePtr<IDeckLinkInput>&,const std::string&)> EnumDevice);
+	Soy::AutoReleasePtr<IDeckLink>			GetDevice(const std::string& MatchSerial);
+	void									EnumDevices(std::function<void(Soy::AutoReleasePtr<IDeckLink>&,const std::string&)> EnumDevice);
 	
 public:
 	Soy::AutoReleasePtr<IDeckLinkIterator>	GetIterator();
@@ -46,8 +46,8 @@ public:
 
 
 
-
-class Decklink::TExtractor : public TMediaExtractor
+//	based on Example CapturePreview
+class Decklink::TExtractor : public TMediaExtractor, public IDeckLinkInputCallback, public IDeckLinkScreenPreviewCallback
 {
 public:
 	TExtractor(const TMediaExtractorParams& Params);
@@ -57,9 +57,25 @@ public:
 	virtual void									GetMeta(TJsonWriter& Json) override;
 	
 protected:
+	//	IDeckLinkInputCallback
+	virtual HRESULT VideoInputFormatChanged (/* in */ BMDVideoInputFormatChangedEvents notificationEvents, /* in */ IDeckLinkDisplayMode *newDisplayMode, /* in */ BMDDetectedVideoInputFormatFlags detectedSignalFlags) override;
+	virtual HRESULT VideoInputFrameArrived (/* in */ IDeckLinkVideoInputFrame* videoFrame, /* in */ IDeckLinkAudioInputPacket* audioPacket) override;
+
+	//	IDeckLinkScreenPreviewCallback
+	virtual HRESULT DrawFrame (/* in */ IDeckLinkVideoFrame *theFrame) override;
+
+	// IUnknown needs only a dummy implementation
+	virtual HRESULT             QueryInterface (REFIID iid, LPVOID *ppv);
+	virtual ULONG               AddRef();
+	virtual ULONG               Release();
+	
+	std::atomic_int				mRefCount;
+	
+protected:
+	void											StartCapture();
 	virtual std::shared_ptr<TMediaPacket>			ReadNextPacket() override;
 	
 public:
-	Soy::AutoReleasePtr<IDeckLinkInput>				mInput;
+	Soy::AutoReleasePtr<IDeckLink>					mDevice;
 };
 

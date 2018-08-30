@@ -76,9 +76,8 @@ bool MatchSerial(const std::string& Serial,const std::string& Match)
 
 void Decklink::EnumDevices(std::function<void(const std::string&)> AppendName)
 {
-	auto Filter = [&](Soy::AutoReleasePtr<IDeckLinkInput>& Input,const std::string& Serial)
+	auto Filter = [&](Soy::AutoReleasePtr<IDeckLink>& Input,const std::string& Serial)
 	{
-		//if ( !MatchFilter( Serial, ))
 		AppendName( Serial );
 	};
 	
@@ -153,7 +152,7 @@ std::string Decklink::GetSerial(IDeckLink& Device,size_t Index)
 	return Serial.str();
 }
 
-void Decklink::TContext::EnumDevices(std::function<void(Soy::AutoReleasePtr<IDeckLinkInput>&,const std::string&)> EnumDevice)
+void Decklink::TContext::EnumDevices(std::function<void(Soy::AutoReleasePtr<IDeckLink>&,const std::string&)> EnumDevice)
 {
 	auto Iterator = GetIterator();
 	Soy::Assert( Iterator!=nullptr, "Iterator expected" );
@@ -178,7 +177,7 @@ void Decklink::TContext::EnumDevices(std::function<void(Soy::AutoReleasePtr<IDec
 			
 			auto Serial = GetSerial( *Device, CurrentDeviceIndex );
 			
-			EnumDevice( DeviceInput, Serial );
+			EnumDevice( Device, Serial );
 		}
 		catch(std::exception& e)
 		{
@@ -189,28 +188,28 @@ void Decklink::TContext::EnumDevices(std::function<void(Soy::AutoReleasePtr<IDec
 	
 }
 
-Soy::AutoReleasePtr<IDeckLinkInput> Decklink::TContext::GetDevice(const std::string& MatchSerial)
+Soy::AutoReleasePtr<IDeckLink> Decklink::TContext::GetDevice(const std::string& MatchSerial)
 {
-	Array<Soy::AutoReleasePtr<IDeckLinkInput>> MatchingDevices;
+	Soy::AutoReleasePtr<IDeckLink> MatchingDevice;
 	
-	auto Filter = [&](Soy::AutoReleasePtr<IDeckLinkInput>& Input,const std::string& Serial)
+	auto Filter = [&](Soy::AutoReleasePtr<IDeckLink>& Input,const std::string& Serial)
 	{
 		if ( !::MatchSerial( Serial, MatchSerial ) )
 			return;
 		
-		MatchingDevices.PushBack( Input );
+		MatchingDevice = Input;
 	};
 	
 	EnumDevices( Filter );
 	
-	if ( MatchingDevices.IsEmpty() )
+	if ( !MatchingDevice )
 	{
 		std::stringstream Error;
 		Error << "No decklink devices matching " << MatchSerial;
 		throw Soy::AssertException( Error.str() );
 	}
 	
-	return MatchingDevices[0];
+	return MatchingDevice;
 }
 
 
@@ -218,10 +217,96 @@ Soy::AutoReleasePtr<IDeckLinkInput> Decklink::TContext::GetDevice(const std::str
 
 
 Decklink::TExtractor::TExtractor(const TMediaExtractorParams& Params) :
-	TMediaExtractor			( Params )
+	TMediaExtractor			( Params ),
+	mRefCount				( 1 )
 {
-	mInput = GetContext().GetDevice( Params.mFilename );
+	mDevice = GetContext().GetDevice( Params.mFilename );
+	
+	StartCapture();
 	Start();
+}
+
+
+void Decklink::TExtractor::StartCapture()
+{
+	Soy::AutoReleasePtr<IDeckLinkInput> DeviceInput;
+	auto Result = mDevice->QueryInterface( IID_IDeckLinkInput, (void**)&DeviceInput.mObject );
+	if ( Result != S_OK )
+		throw Soy::AssertException("Failed to get decklink input");
+	
+	//	get modes
+	Array<IDeckLinkDisplayMode*> modeList;
+	{
+		Soy::AutoReleasePtr<IDeckLinkDisplayModeIterator> displayModeIterator;
+		Result = DeviceInput->GetDisplayModeIterator(&displayModeIterator.mObject);
+		if ( Result != S_OK )
+			throw Soy::AssertException("Failed to get display mode iterator");
+	
+		//	needs release?
+		IDeckLinkDisplayMode* displayMode = NULL;
+		while (displayModeIterator->Next(&displayMode) == S_OK)
+			modeList.PushBack(displayMode);
+	}
+	
+	// Enable input video mode detection if the device supports it
+	//BMDVideoInputFlags videoInputFlags = supportFormatDetection ? bmdVideoInputEnableFormatDetection : bmdVideoInputFlagDefault;
+	BMDVideoInputFlags videoInputFlags = bmdVideoInputFlagDefault;
+
+	// Set the screen preview
+	DeviceInput->SetScreenPreviewCallback(this);
+	
+	// Set capture callback
+	DeviceInput->SetCallback(this);
+	
+
+	BufferArray<_BMDPixelFormat,2> PixelFormats;
+	PixelFormats.PushBack(bmdFormat8BitBGRA);
+	PixelFormats.PushBack(bmdFormat8BitYUV);
+	
+	auto GetCompatibleVideoMode = [&](_BMDPixelFormat Format)
+	{
+		for ( int i=0;	i<modeList.GetSize();	i++ )
+		{
+			auto* VideoMode = modeList[i];
+			
+			// Set the video input mode
+			//auto PixelFormat = bmdFormat10BitYUV;
+			auto PixelFormat = bmdFormat8BitBGRA;
+			Result = DeviceInput->EnableVideoInput(VideoMode->GetDisplayMode(), PixelFormat, videoInputFlags);
+			if ( Result != S_OK)
+			{
+				continue;
+				//throw Soy::AssertException("unable to select the video mode. Perhaps device is currently in-use");
+			}
+			
+			return VideoMode;
+		}
+		throw Soy::AssertException("Failed to get video mode");
+	};
+
+	_BMDPixelFormat PixelFormat;
+	IDeckLinkDisplayMode* VideoMode = nullptr;
+	
+	for ( int pm=0;	pm<PixelFormats.GetSize();	pm++ )
+	{
+		try
+		{
+			VideoMode = GetCompatibleVideoMode( PixelFormats[pm] );
+			PixelFormat = PixelFormats[pm];
+			break;
+		}
+		catch(std::exception& e)
+		{
+		}
+	}
+	
+	if ( !VideoMode )
+		throw Soy::AssertException("Failed to get video mode");
+	
+	// Start the capture
+	Result = DeviceInput->StartStreams();
+	if ( Result != S_OK)
+		throw Soy::AssertException("Failed to start capture");
 }
 
 void Decklink::TExtractor::GetStreams(ArrayBridge<TStreamMeta>&& Streams)
@@ -247,3 +332,67 @@ void Decklink::TExtractor::GetMeta(TJsonWriter& Json)
 	TMediaExtractor::GetMeta( Json );
 }
 
+
+HRESULT Decklink::TExtractor::DrawFrame (/* in */ IDeckLinkVideoFrame *theFrame)
+{
+	std::Debug << __func__ << std::endl;
+	return S_OK;
+}
+
+
+
+HRESULT Decklink::TExtractor::VideoInputFormatChanged (/* in */ BMDVideoInputFormatChangedEvents notificationEvents, /* in */ IDeckLinkDisplayMode *newDisplayMode, /* in */ BMDDetectedVideoInputFormatFlags detectedSignalFlags)
+{
+	std::Debug << __func__ << std::endl;
+	return S_OK;
+}
+
+HRESULT Decklink::TExtractor::VideoInputFrameArrived (/* in */ IDeckLinkVideoInputFrame* videoFrame, /* in */ IDeckLinkAudioInputPacket* audioPacket)
+{
+	std::Debug << __func__ << std::endl;
+	return S_OK;
+}
+
+
+HRESULT Decklink::TExtractor::QueryInterface (REFIID iid, LPVOID *ppv)
+{
+	CFUUIDBytes		iunknown;
+	HRESULT			result = E_NOINTERFACE;
+	
+	// Initialise the return result
+	*ppv = NULL;
+	
+	// Obtain the IUnknown interface and compare it the provided REFIID
+	iunknown = CFUUIDGetUUIDBytes(IUnknownUUID);
+	if (memcmp(&iid, &iunknown, sizeof(REFIID)) == 0)
+	{
+		*ppv = this;
+		AddRef();
+		result = S_OK;
+	}
+	else if (memcmp(&iid, &IID_IDeckLinkDeviceNotificationCallback, sizeof(REFIID)) == 0)
+	{
+		*ppv = (IDeckLinkDeviceNotificationCallback*)this;
+		AddRef();
+		result = S_OK;
+	}
+	
+	return result;
+}
+
+ULONG Decklink::TExtractor::AddRef (void)
+{
+	return ++mRefCount;
+}
+
+ULONG Decklink::TExtractor::Release (void)
+{
+	auto NewValue = --mRefCount;
+	if ( NewValue == 0 )
+	{
+		delete this;
+		return 0;
+	}
+	
+	return NewValue;
+}
