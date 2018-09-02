@@ -65,9 +65,9 @@ protected:
 	virtual HRESULT DrawFrame (/* in */ IDeckLinkVideoFrame *theFrame) override;
 
 	// IUnknown needs only a dummy implementation
-	virtual HRESULT             QueryInterface (REFIID iid, LPVOID *ppv);
-	virtual ULONG               AddRef();
-	virtual ULONG               Release();
+	virtual HRESULT             QueryInterface (REFIID iid, LPVOID *ppv) override;
+	virtual ULONG               AddRef() override;
+	virtual ULONG               Release() override;
 	
 	std::atomic_int				mRefCount;
 	
