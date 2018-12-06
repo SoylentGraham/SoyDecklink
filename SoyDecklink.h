@@ -1,7 +1,7 @@
 #pragma once
 
-#include <SoyMedia.h>
-#include <SoyAutoReleasePtr.h>
+#include "SoyMedia.h"
+#include "SoyAutoReleasePtr.h"
 
 #if defined(TARGET_WINDOWS)
 

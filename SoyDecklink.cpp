@@ -1,6 +1,6 @@
 #include "SoyDecklink.h"
-#include <SoyTypes.h>	//	Platform::IsOkay
-#include <SoyCfString.h>
+#include "SoyTypes.h"	//	Platform::IsOkay
+#include "SoyCfString.h"
 
 //	include the API source
 #include "DecklinkSdk/Mac/include/DeckLinkAPIDispatch.cpp"
