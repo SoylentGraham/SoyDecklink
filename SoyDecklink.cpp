@@ -327,12 +327,6 @@ std::shared_ptr<TMediaPacket> Decklink::TExtractor::ReadNextPacket()
 }
 
 
-void Decklink::TExtractor::GetMeta(TJsonWriter& Json)
-{
-	TMediaExtractor::GetMeta( Json );
-}
-
-
 HRESULT Decklink::TExtractor::DrawFrame (/* in */ IDeckLinkVideoFrame *theFrame)
 {
 	std::Debug << __func__ << std::endl;

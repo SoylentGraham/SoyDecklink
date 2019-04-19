@@ -54,7 +54,6 @@ public:
 	
 	virtual void									GetStreams(ArrayBridge<TStreamMeta>&& Streams) override;
 	virtual std::shared_ptr<Platform::TMediaFormat>	GetStreamFormat(size_t StreamIndex) override		{	return nullptr;	}
-	virtual void									GetMeta(TJsonWriter& Json) override;
 	
 protected:
 	//	IDeckLinkInputCallback
